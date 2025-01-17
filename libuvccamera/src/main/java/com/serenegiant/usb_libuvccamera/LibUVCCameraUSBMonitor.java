@@ -171,13 +171,17 @@ public final class LibUVCCameraUSBMonitor {
 						context,
 						0,
 						new Intent(ACTION_USB_PERMISSION),
-						(Build.VERSION.SDK_INT >= 31) ? PendingIntent.FLAG_MUTABLE : 0
+						(Build.VERSION.SDK_INT >= 31) ? PendingIntent.FLAG_IMMUTABLE : 0
 				);
 				final IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
 				// ACTION_USB_DEVICE_ATTACHED never comes on some devices so it should not be added here
 				filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-				context.registerReceiver(mUsbReceiver, filter);
-			}
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+					context.registerReceiver(mUsbReceiver, filter, Context.RECEIVER_EXPORTED);
+				} else {
+					context.registerReceiver(mUsbReceiver, filter);
+				}
+ 			}
 			// start connection check
 			mDeviceCounts = 0;
 			mAsyncHandler.postDelayed(mDeviceCheckRunnable, 1000);

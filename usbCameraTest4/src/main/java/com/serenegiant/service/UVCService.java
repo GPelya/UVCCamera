@@ -132,7 +132,7 @@ public class UVCService extends BaseService {
 							this,
 							0,
 							new Intent(this, MainActivity.class),
-							(Build.VERSION.SDK_INT >= 31) ? PendingIntent.FLAG_MUTABLE : 0
+							(Build.VERSION.SDK_INT >= 31) ? PendingIntent.FLAG_IMMUTABLE : 0
 					)
 			) // The intent to send when the entry is clicked
 			.build();
