@@ -33,6 +33,8 @@ import java.util.Locale;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.media.MediaScannerConnection;
+import android.net.Uri;
 import android.os.Environment;
 import android.text.TextUtils;
 import android.util.Log;
@@ -42,6 +44,7 @@ import androidx.annotation.Nullable;
 public class MediaMuxerWrapper {
 	private static final boolean DEBUG = true;	// TODO set false on release
 	private static final String TAG = "MediaMuxerWrapper";
+	private static android.content.Context mContext;  // Add context field
 
 	private static final SimpleDateFormat mDateTimeFormat = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.US);
 	private static final String DIR_NAME = "USBCamera";
@@ -54,12 +57,14 @@ public class MediaMuxerWrapper {
 
 	/**
 	 * Constructor
+	 * @param context Android context
 	 * @param dir direction of output file
 	 * @param filename name of output file
 	 * @param ext extension of output file
 	 * @throws IOException
 	 */
-	public MediaMuxerWrapper(String dir, @Nullable String filename, @Nullable String ext) throws IOException {
+	public MediaMuxerWrapper(android.content.Context context, String dir, @Nullable String filename, @Nullable String ext) throws IOException {
+		mContext = context;  // Store context
 		if (TextUtils.isEmpty(ext)) ext = ".mp4";
 		try {
 			mOutputPath = getCaptureFile(Environment.DIRECTORY_MOVIES, ext, dir, filename).toString();
@@ -207,7 +212,26 @@ public class MediaMuxerWrapper {
 		Log.d(TAG, "path=" + dir.toString());
 		dir.mkdirs();
 		if (dir.canWrite()) {
-			return new File(dir, filename + ext);
+			final File file = new File(dir, filename + ext);
+			// Scan the file so it shows up in gallery immediately
+			try {
+				MediaScannerConnection.scanFile(
+					mContext,  // Use stored context
+					new String[]{ file.getAbsolutePath() },
+					null,
+					new MediaScannerConnection.OnScanCompletedListener() {
+						@Override
+						public void onScanCompleted(String path, Uri uri) {
+							if (DEBUG) {
+								Log.d(TAG, "Media scan completed: " + path);
+							}
+						}
+					}
+				);
+			} catch (final Exception e) {
+				Log.e(TAG, "Failed to scan media file: " + file.getAbsolutePath(), e);
+			}
+			return file;
 		}
 		return null;
 	}

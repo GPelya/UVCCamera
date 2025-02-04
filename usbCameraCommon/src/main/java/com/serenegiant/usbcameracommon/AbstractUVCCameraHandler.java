@@ -565,7 +565,9 @@ abstract class AbstractUVCCameraHandler extends Handler {
 			if (DEBUG) { Log.v(TAG_THREAD, "handleStartRecording:"); }
 			try {
 				if ((mUVCCamera == null) || (mMuxer != null)) return;
-				final MediaMuxerWrapper muxer = new MediaMuxerWrapper(dir, filename, ".mp4");	// if you record audio only, ".m4a" is also OK.
+				final Activity parent = mWeakParent.get();
+				if (parent == null) return;
+				final MediaMuxerWrapper muxer = new MediaMuxerWrapper(parent.getApplicationContext(), dir, filename, ".mp4");  // if you record audio only, ".m4a" is also OK.
 				MediaVideoBufferEncoder videoEncoder = null;
 				switch (mEncoderType) {
 				case 1:	// for video capturing using MediaVideoEncoder
