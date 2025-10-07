@@ -2301,3 +2301,432 @@ void UVCCamera::setCameraAngle(int cameraAngle){
 		mPreview->setCameraAngle(cameraAngle);
 	}
 }
+
+//======================================================================
+// JSON builder helper functions
+//======================================================================
+
+// Structure for accumulating JSON string
+typedef struct {
+    char *buffer;
+    size_t size;
+    size_t capacity;
+} json_builder_t;
+
+static void json_append(json_builder_t *builder, const char *str) {
+    size_t len = strlen(str);
+    if (builder->size + len + 1 > builder->capacity) {
+        builder->capacity = (builder->capacity + len + 1) * 2;
+        builder->buffer = (char*)realloc(builder->buffer, builder->capacity);
+    }
+    strcpy(builder->buffer + builder->size, str);
+    builder->size += len;
+}
+
+static void json_append_formatted(json_builder_t *builder, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+
+    char temp[512];
+    vsnprintf(temp, sizeof(temp), format, args);
+    json_append(builder, temp);
+
+    va_end(args);
+}
+
+// Convert bytes to hex string
+static void bytes_to_hex(const uint8_t *data, int len, char *hex_str) {
+    for (int i = 0; i < len; i++) {
+        sprintf(hex_str + i * 2, "%02x", data[i]);
+    }
+    hex_str[len * 2] = '\0';
+}
+
+// Convert bytes to decimal value
+static long long bytes_to_decimal(const uint8_t *data, int len) {
+    long long result = 0;
+    for (int i = 0; i < len && i < 8; i++) {
+        result |= ((long long)data[i]) << (i * 8);
+    }
+    return result;
+}
+
+// Convert GUID to standard format
+static void guid_to_string(const uint8_t *guid, char *guid_str) {
+    sprintf(guid_str, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+            guid[3], guid[2], guid[1], guid[0],  // Little-endian DWORD
+            guid[5], guid[4],                     // Little-endian WORD
+            guid[7], guid[6],                     // Little-endian WORD
+            guid[8], guid[9],                     // Big-endian bytes
+            guid[10], guid[11], guid[12], guid[13], guid[14], guid[15]);
+}
+
+// Get Camera Terminal control name
+static const char* get_camera_terminal_control_name(uint8_t ctrl_id) {
+    switch (ctrl_id) {
+        case UVC_CT_SCANNING_MODE_CONTROL: return "Scanning Mode";
+        case UVC_CT_AE_MODE_CONTROL: return "Auto-Exposure Mode";
+        case UVC_CT_AE_PRIORITY_CONTROL: return "Auto-Exposure Priority";
+        case UVC_CT_EXPOSURE_TIME_ABSOLUTE_CONTROL: return "Exposure Time (Absolute)";
+        case UVC_CT_EXPOSURE_TIME_RELATIVE_CONTROL: return "Exposure Time (Relative)";
+        case UVC_CT_FOCUS_ABSOLUTE_CONTROL: return "Focus (Absolute)";
+        case UVC_CT_FOCUS_RELATIVE_CONTROL: return "Focus (Relative)";
+        case UVC_CT_FOCUS_AUTO_CONTROL: return "Auto Focus";
+        case UVC_CT_IRIS_ABSOLUTE_CONTROL: return "Iris (Absolute)";
+        case UVC_CT_IRIS_RELATIVE_CONTROL: return "Iris (Relative)";
+        case UVC_CT_ZOOM_ABSOLUTE_CONTROL: return "Zoom (Absolute)";
+        case UVC_CT_ZOOM_RELATIVE_CONTROL: return "Zoom (Relative)";
+        case UVC_CT_PANTILT_ABSOLUTE_CONTROL: return "Pan/Tilt (Absolute)";
+        case UVC_CT_PANTILT_RELATIVE_CONTROL: return "Pan/Tilt (Relative)";
+        case UVC_CT_ROLL_ABSOLUTE_CONTROL: return "Roll (Absolute)";
+        case UVC_CT_ROLL_RELATIVE_CONTROL: return "Roll (Relative)";
+        case UVC_CT_PRIVACY_CONTROL: return "Privacy";
+        case UVC_CT_FOCUS_SIMPLE_CONTROL: return "Focus (Simple)";
+        case UVC_CT_DIGITAL_WINDOW_CONTROL: return "Digital Window";
+        case UVC_CT_REGION_OF_INTEREST_CONTROL: return "Region of Interest";
+        default: return "Unknown Camera Control";
+    }
+}
+
+// Get Processing Unit control name
+static const char* get_processing_unit_control_name(uint8_t ctrl_id) {
+    switch (ctrl_id) {
+        case UVC_PU_BACKLIGHT_COMPENSATION_CONTROL: return "Backlight Compensation";
+        case UVC_PU_BRIGHTNESS_CONTROL: return "Brightness";
+        case UVC_PU_CONTRAST_CONTROL: return "Contrast";
+        case UVC_PU_GAIN_CONTROL: return "Gain";
+        case UVC_PU_POWER_LINE_FREQUENCY_CONTROL: return "Power Line Frequency";
+        case UVC_PU_HUE_CONTROL: return "Hue";
+        case UVC_PU_SATURATION_CONTROL: return "Saturation";
+        case UVC_PU_SHARPNESS_CONTROL: return "Sharpness";
+        case UVC_PU_GAMMA_CONTROL: return "Gamma";
+        case UVC_PU_WHITE_BALANCE_TEMPERATURE_CONTROL: return "White Balance Temperature";
+        case UVC_PU_WHITE_BALANCE_TEMPERATURE_AUTO_CONTROL: return "Auto White Balance Temperature";
+        case UVC_PU_WHITE_BALANCE_COMPONENT_CONTROL: return "White Balance Component";
+        case UVC_PU_WHITE_BALANCE_COMPONENT_AUTO_CONTROL: return "Auto White Balance Component";
+        case UVC_PU_DIGITAL_MULTIPLIER_CONTROL: return "Digital Multiplier";
+        case UVC_PU_DIGITAL_MULTIPLIER_LIMIT_CONTROL: return "Digital Multiplier Limit";
+        case UVC_PU_HUE_AUTO_CONTROL: return "Auto Hue";
+        case UVC_PU_ANALOG_VIDEO_STANDARD_CONTROL: return "Analog Video Standard";
+        case UVC_PU_ANALOG_LOCK_STATUS_CONTROL: return "Analog Lock Status";
+        case UVC_PU_CONTRAST_AUTO_CONTROL: return "Auto Contrast";
+        default: return "Unknown Processing Control";
+    }
+}
+
+// Control types for naming
+enum control_type {
+    CONTROL_TYPE_EXTENSION,
+    CONTROL_TYPE_CAMERA_TERMINAL,
+    CONTROL_TYPE_PROCESSING_UNIT
+};
+
+// Get information about a single control
+static void get_control_info(uvc_device_handle_t *devh, uint8_t unit_id,
+                           uint8_t ctrl_id, json_builder_t *builder, int is_last,
+                           enum control_type type = CONTROL_TYPE_EXTENSION) {
+    json_append_formatted(builder, "      \"%d\": {\n", ctrl_id);
+
+    // Add control name for standard controls
+    const char* control_name = nullptr;
+    if (type == CONTROL_TYPE_CAMERA_TERMINAL) {
+        control_name = get_camera_terminal_control_name(ctrl_id);
+    } else if (type == CONTROL_TYPE_PROCESSING_UNIT) {
+        control_name = get_processing_unit_control_name(ctrl_id);
+    }
+
+    if (control_name) {
+        json_append_formatted(builder, "        \"name\": \"%s\",\n", control_name);
+    }
+
+    // Check control support
+    int len = uvc_get_ctrl_len(devh, unit_id, ctrl_id);
+    if (len <= 0) {
+        json_append(builder, "        \"supported\": false\n");
+        json_append_formatted(builder, "      }%s\n", is_last ? "" : ",");
+        return;
+    }
+
+    json_append(builder, "        \"supported\": true,\n");
+    json_append_formatted(builder, "        \"length\": %d,\n", len);
+
+    uint8_t *data = (uint8_t*)malloc(len);
+
+    // Get capability information
+    uint8_t info;
+    if (uvc_get_ctrl(devh, unit_id, ctrl_id, &info, 1, UVC_GET_INFO) >= 0) {
+        json_append_formatted(builder, "        \"capabilities\": {\n");
+        json_append_formatted(builder, "          \"get\": %s,\n", (info & 0x01) ? "true" : "false");
+        json_append_formatted(builder, "          \"set\": %s,\n", (info & 0x02) ? "true" : "false");
+        json_append_formatted(builder, "          \"auto_disabled\": %s,\n", (info & 0x04) ? "true" : "false");
+        json_append_formatted(builder, "          \"auto_update\": %s,\n", (info & 0x08) ? "true" : "false");
+        json_append_formatted(builder, "          \"async\": %s\n", (info & 0x10) ? "true" : "false");
+        json_append(builder, "        },\n");
+    }
+
+    json_append(builder, "        \"values\": {\n");
+
+    int has_values = 0;
+
+    // Current value
+    if (uvc_get_ctrl(devh, unit_id, ctrl_id, data, len, UVC_GET_CUR) >= 0) {
+        long long decimal_val = bytes_to_decimal(data, len);
+        json_append_formatted(builder, "          \"current\": %lld", decimal_val);
+        has_values = 1;
+    }
+
+    // Minimum value
+    if (uvc_get_ctrl(devh, unit_id, ctrl_id, data, len, UVC_GET_MIN) >= 0) {
+        long long decimal_val = bytes_to_decimal(data, len);
+        json_append_formatted(builder, "%s\n          \"min\": %lld", has_values ? "," : "", decimal_val);
+        has_values = 1;
+    }
+
+    // Maximum value
+    if (uvc_get_ctrl(devh, unit_id, ctrl_id, data, len, UVC_GET_MAX) >= 0) {
+        long long decimal_val = bytes_to_decimal(data, len);
+        json_append_formatted(builder, "%s\n          \"max\": %lld", has_values ? "," : "", decimal_val);
+        has_values = 1;
+    }
+
+    // Resolution (step)
+    if (uvc_get_ctrl(devh, unit_id, ctrl_id, data, len, UVC_GET_RES) >= 0) {
+        long long decimal_val = bytes_to_decimal(data, len);
+        json_append_formatted(builder, "%s\n          \"resolution\": %lld", has_values ? "," : "", decimal_val);
+        has_values = 1;
+    }
+
+    // Default value
+    if (uvc_get_ctrl(devh, unit_id, ctrl_id, data, len, UVC_GET_DEF) >= 0) {
+        long long decimal_val = bytes_to_decimal(data, len);
+        json_append_formatted(builder, "%s\n          \"default\": %lld", has_values ? "," : "", decimal_val);
+        has_values = 1;
+    }
+
+    if (has_values) {
+        json_append(builder, "\n");
+    }
+
+    json_append(builder, "        }\n");
+    json_append_formatted(builder, "      }%s\n", is_last ? "" : ",");
+
+    free(data);
+}
+
+//======================================================================
+/**
+ * Get all controls information as JSON string
+ */
+char* UVCCamera::getAllControlsJson() {
+    ENTER();
+
+    if (UNLIKELY(!mDeviceHandle)) {
+        LOGW("device is not opened");
+        return NULL;
+    }
+
+    json_builder_t builder = {0};
+    builder.capacity = 4096;
+    builder.buffer = (char*)malloc(builder.capacity);
+    builder.buffer[0] = '\0';
+
+    json_append(&builder, "{\n");
+    json_append(&builder, "  \"device_controls\": {\n");
+
+    int has_units = 0;
+
+    // 1. Extension Units
+    const uvc_extension_unit_t *ext_unit = uvc_get_extension_units(mDeviceHandle);
+    if (ext_unit) {
+        json_append(&builder, "    \"extension_units\": {\n");
+
+        int ext_count = 0;
+        const uvc_extension_unit_t *current_ext = ext_unit;
+        while (current_ext) {
+            ext_count++;
+            current_ext = current_ext->next;
+        }
+
+        int ext_index = 0;
+        current_ext = ext_unit;
+        while (current_ext) {
+            char guid_str[37];
+            guid_to_string(current_ext->guidExtensionCode, guid_str);
+
+            json_append_formatted(&builder, "      \"unit_%d\": {\n", current_ext->bUnitID);
+            json_append_formatted(&builder, "        \"unit_id\": %d,\n", current_ext->bUnitID);
+            json_append_formatted(&builder, "        \"guid\": \"%s\",\n", guid_str);
+            json_append_formatted(&builder, "        \"request_code\": \"0x%04x\",\n", current_ext->request);
+            json_append_formatted(&builder, "        \"supported_controls\": \"0x%016llx\",\n", (unsigned long long)current_ext->bmControls);
+            json_append(&builder, "        \"controls\": {\n");
+
+            // Iterate through supported controls
+            int ctrl_count = 0;
+            for (int i = 1; i <= 64; i++) {
+                if (current_ext->bmControls & (1ULL << (i - 1))) {
+                    ctrl_count++;
+                }
+            }
+
+            int ctrl_index = 0;
+            for (int i = 1; i <= 64; i++) {
+                if (current_ext->bmControls & (1ULL << (i - 1))) {
+                    get_control_info(mDeviceHandle, current_ext->bUnitID, i, &builder, ++ctrl_index == ctrl_count, CONTROL_TYPE_EXTENSION);
+                }
+            }
+
+            json_append(&builder, "        }\n");
+            json_append_formatted(&builder, "      }%s\n", ++ext_index == ext_count ? "" : ",");
+
+            current_ext = current_ext->next;
+        }
+
+        json_append(&builder, "    }");
+        has_units = 1;
+    }
+
+    // 2. Camera Terminals (Input Terminals)
+    const uvc_input_terminal_t *input_term = uvc_get_input_terminals(mDeviceHandle);
+    if (input_term) {
+        if (has_units) json_append(&builder, ",\n");
+        json_append(&builder, "    \"camera_terminals\": {\n");
+
+        int term_count = 0;
+        const uvc_input_terminal_t *current_term = input_term;
+        while (current_term) {
+            term_count++;
+            current_term = current_term->next;
+        }
+
+        int term_index = 0;
+        current_term = input_term;
+        while (current_term) {
+            json_append_formatted(&builder, "      \"terminal_%d\": {\n", current_term->bTerminalID);
+            json_append_formatted(&builder, "        \"terminal_id\": %d,\n", current_term->bTerminalID);
+            json_append_formatted(&builder, "        \"terminal_type\": \"0x%04x\",\n", current_term->wTerminalType);
+            json_append_formatted(&builder, "        \"supported_controls\": \"0x%016llx\",\n", (unsigned long long)current_term->bmControls);
+            json_append(&builder, "        \"controls\": {\n");
+
+            // Standard Camera Terminal controls
+            const int ct_controls[] = {
+                UVC_CT_SCANNING_MODE_CONTROL,
+                UVC_CT_AE_MODE_CONTROL,
+                UVC_CT_AE_PRIORITY_CONTROL,
+                UVC_CT_EXPOSURE_TIME_ABSOLUTE_CONTROL,
+                UVC_CT_EXPOSURE_TIME_RELATIVE_CONTROL,
+                UVC_CT_FOCUS_ABSOLUTE_CONTROL,
+                UVC_CT_FOCUS_RELATIVE_CONTROL,
+                UVC_CT_FOCUS_AUTO_CONTROL,
+                UVC_CT_IRIS_ABSOLUTE_CONTROL,
+                UVC_CT_IRIS_RELATIVE_CONTROL,
+                UVC_CT_ZOOM_ABSOLUTE_CONTROL,
+                UVC_CT_ZOOM_RELATIVE_CONTROL,
+                UVC_CT_PANTILT_ABSOLUTE_CONTROL,
+                UVC_CT_PANTILT_RELATIVE_CONTROL,
+                UVC_CT_ROLL_ABSOLUTE_CONTROL,
+                UVC_CT_ROLL_RELATIVE_CONTROL,
+                UVC_CT_PRIVACY_CONTROL,
+                UVC_CT_FOCUS_SIMPLE_CONTROL,
+                UVC_CT_DIGITAL_WINDOW_CONTROL,
+                UVC_CT_REGION_OF_INTEREST_CONTROL
+            };
+
+            int supported_count = 0;
+            for (int i = 0; i < (int)(sizeof(ct_controls)/sizeof(ct_controls[0])); i++) {
+                if (current_term->bmControls & (1ULL << (ct_controls[i] - 1))) {
+                    supported_count++;
+                }
+            }
+
+            int supported_index = 0;
+            for (int i = 0; i < (int)(sizeof(ct_controls)/sizeof(ct_controls[0])); i++) {
+                if (current_term->bmControls & (1ULL << (ct_controls[i] - 1))) {
+                    get_control_info(mDeviceHandle, current_term->bTerminalID, ct_controls[i],
+                                   &builder, ++supported_index == supported_count, CONTROL_TYPE_CAMERA_TERMINAL);
+                }
+            }
+
+            json_append(&builder, "        }\n");
+            json_append_formatted(&builder, "      }%s\n", ++term_index == term_count ? "" : ",");
+
+            current_term = current_term->next;
+        }
+
+        json_append(&builder, "    }");
+        has_units = 1;
+    }
+
+    // 3. Processing Units
+    const uvc_processing_unit_t *proc_unit = uvc_get_processing_units(mDeviceHandle);
+    if (proc_unit) {
+        if (has_units) json_append(&builder, ",\n");
+        json_append(&builder, "    \"processing_units\": {\n");
+
+        int proc_count = 0;
+        const uvc_processing_unit_t *current_proc = proc_unit;
+        while (current_proc) {
+            proc_count++;
+            current_proc = current_proc->next;
+        }
+
+        int proc_index = 0;
+        current_proc = proc_unit;
+        while (current_proc) {
+            json_append_formatted(&builder, "      \"unit_%d\": {\n", current_proc->bUnitID);
+            json_append_formatted(&builder, "        \"unit_id\": %d,\n", current_proc->bUnitID);
+            json_append_formatted(&builder, "        \"source_id\": %d,\n", current_proc->bSourceID);
+            json_append_formatted(&builder, "        \"supported_controls\": \"0x%016llx\",\n", (unsigned long long)current_proc->bmControls);
+            json_append(&builder, "        \"controls\": {\n");
+
+            // Standard Processing Unit controls
+            const int pu_controls[] = {
+                UVC_PU_BACKLIGHT_COMPENSATION_CONTROL,
+                UVC_PU_BRIGHTNESS_CONTROL,
+                UVC_PU_CONTRAST_CONTROL,
+                UVC_PU_GAIN_CONTROL,
+                UVC_PU_POWER_LINE_FREQUENCY_CONTROL,
+                UVC_PU_HUE_CONTROL,
+                UVC_PU_SATURATION_CONTROL,
+                UVC_PU_SHARPNESS_CONTROL,
+                UVC_PU_GAMMA_CONTROL,
+                UVC_PU_WHITE_BALANCE_TEMPERATURE_CONTROL,
+                UVC_PU_WHITE_BALANCE_TEMPERATURE_AUTO_CONTROL,
+                UVC_PU_WHITE_BALANCE_COMPONENT_CONTROL,
+                UVC_PU_WHITE_BALANCE_COMPONENT_AUTO_CONTROL,
+                UVC_PU_DIGITAL_MULTIPLIER_CONTROL,
+                UVC_PU_DIGITAL_MULTIPLIER_LIMIT_CONTROL,
+                UVC_PU_HUE_AUTO_CONTROL,
+                UVC_PU_ANALOG_VIDEO_STANDARD_CONTROL,
+                UVC_PU_ANALOG_LOCK_STATUS_CONTROL,
+                UVC_PU_CONTRAST_AUTO_CONTROL
+            };
+
+            int pu_supported_count = 0;
+            for (int i = 0; i < (int)(sizeof(pu_controls)/sizeof(pu_controls[0])); i++) {
+                if (current_proc->bmControls & (1ULL << (pu_controls[i] - 1))) {
+                    pu_supported_count++;
+                }
+            }
+
+            int pu_supported_index = 0;
+            for (int i = 0; i < (int)(sizeof(pu_controls)/sizeof(pu_controls[0])); i++) {
+                if (current_proc->bmControls & (1ULL << (pu_controls[i] - 1))) {
+                    get_control_info(mDeviceHandle, current_proc->bUnitID, pu_controls[i],
+                                   &builder, ++pu_supported_index == pu_supported_count, CONTROL_TYPE_PROCESSING_UNIT);
+                }
+            }
+
+            json_append(&builder, "        }\n");
+            json_append_formatted(&builder, "      }%s\n", ++proc_index == proc_count ? "" : ",");
+
+            current_proc = current_proc->next;
+        }
+
+        json_append(&builder, "    }");
+    }
+
+    json_append(&builder, "\n  }\n");
+    json_append(&builder, "}\n");
+
+    RETURN(builder.buffer, char*);
+}

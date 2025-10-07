@@ -253,6 +253,22 @@ static jobject nativeGetSupportedSize(JNIEnv *env, jobject thiz,
 	RETURN(result, jobject);
 }
 
+static jobject nativeGetAllControlsJson(JNIEnv *env, jobject thiz,
+	ID_TYPE id_camera) {
+
+	ENTER();
+	jstring result = NULL;
+	UVCCamera *camera = reinterpret_cast<UVCCamera *>(id_camera);
+	if (LIKELY(camera)) {
+		char *c_str = camera->getAllControlsJson();
+		if (LIKELY(c_str)) {
+			result = env->NewStringUTF(c_str);
+			free(c_str);
+		}
+	}
+	RETURN(result, jobject);
+}
+
 //======================================================================
 // 设定预览画面的大小
 static jint nativeSetPreviewSize(JNIEnv *env, jobject thiz,
@@ -2068,6 +2084,7 @@ static JNINativeMethod methods[] = {
 	{ "nativeSetButtonCallback",		"(JLcom/serenegiant/usb_libuvccamera/IButtonCallback;)I", (void *) nativeSetButtonCallback },
 
 	{ "nativeGetSupportedSize",			"(J)Ljava/lang/String;", (void *) nativeGetSupportedSize },
+	{ "nativeGetAllControlsJson",		"(J)Ljava/lang/String;", (void *) nativeGetAllControlsJson },
 	{ "nativeSetPreviewSize",			"(JIIIIIIF)I", (void *) nativeSetPreviewSize },
 	{ "nativeStartPreview",				"(J)I", (void *) nativeStartPreview },
 	{ "nativeStopPreview",				"(J)I", (void *) nativeStopPreview },

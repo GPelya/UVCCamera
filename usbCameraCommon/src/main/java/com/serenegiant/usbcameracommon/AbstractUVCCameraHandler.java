@@ -313,6 +313,20 @@ abstract class AbstractUVCCameraHandler extends Handler {
 		throw new IllegalStateException();
 	}
 
+	/**
+	 * Get all controls information as JSON string
+	 * @return JSON string containing information about all available controls or null if camera is not available
+	 */
+	public String getAllControlsJson() {
+		checkReleased();
+		final CameraThread thread = mWeakThread.get();
+		final UVCCamera camera = thread != null ? thread.mUVCCamera : null;
+		if (camera != null) {
+			return camera.getAllControlsJson();
+		}
+		return null;
+	}
+
 	@Override
 	public void handleMessage(final Message msg) {
 		final CameraThread thread = mWeakThread.get();

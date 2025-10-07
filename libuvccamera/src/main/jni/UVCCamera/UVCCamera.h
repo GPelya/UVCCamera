@@ -357,6 +357,9 @@ public:
 	void setHorizontalMirror(int horizontalMirror);
 	void setVerticalMirror(int verticalMirror);
 	void setCameraAngle(int cameraAngle);
+
+	// Get all controls information as JSON string
+	char* getAllControlsJson();
 };
 
 #endif /* UVCCAMERA_H_ */

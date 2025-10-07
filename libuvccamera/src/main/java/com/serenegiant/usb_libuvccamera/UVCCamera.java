@@ -274,6 +274,17 @@ public class UVCCamera {
 		return !TextUtils.isEmpty(mSupportedSize) ? mSupportedSize : (mSupportedSize = nativeGetSupportedSize(mNativePtr));
 	}
 
+	/**
+	 * Get all controls information as JSON string
+	 * @return JSON string containing information about all available controls (Extension Units, Camera Terminals, Processing Units)
+	 */
+	public synchronized String getAllControlsJson() {
+		if (mNativePtr != 0) {
+			return nativeGetAllControlsJson(mNativePtr);
+		}
+		return null;
+	}
+
 	public Size getPreviewSize() {
 		Size result = null;
 		final List<Size> list = getSupportedSizeList();
@@ -1123,6 +1134,7 @@ public class UVCCamera {
 
 	private static final native int nativeSetPreviewSize(final long id_camera, final int width, final int height, final int cameraAngle, final int min_fps, final int max_fps, final int mode, final float bandwidth);
 	private static final native String nativeGetSupportedSize(final long id_camera);
+	private static final native String nativeGetAllControlsJson(final long id_camera);
 	private static final native int nativeStartPreview(final long id_camera);
 	private static final native int nativeStopPreview(final long id_camera);
 	private static final native int nativeSetPreviewDisplay(final long id_camera, final Surface surface);
